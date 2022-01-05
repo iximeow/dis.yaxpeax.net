@@ -1,6 +1,5 @@
 use fastly::http::{header, Method, StatusCode};
 use fastly::{Error, Request, Response};
-use std::collections::BTreeSet;
 use std::time::Instant;
 
 #[fastly::main]
@@ -96,32 +95,29 @@ fn handle_req(req: &Request) -> (StatusCode, String) {
         "6502" => crate::current_arch::decode_input::<yaxpeax_6502::N6502>(&buf, quiet),
         "lc87" => crate::current_arch::decode_input::<yaxpeax_lc87::LC87>(&buf, quiet),
         other => {
-            let seg_idx = other.find(|c| c == '+' || c == '-').unwrap_or(other.len());
-            let wps = |base| with_parsed_superh(base, &other[seg_idx..],
-                |decoder| crate::legacy_arch::decode_input_with_decoder::<yaxpeax_superh::SuperH>(decoder, &buf, quiet));
+            let seg_idx = other.find(&['+', '-'][..]).unwrap_or(other.len());
+            let decode = |base| crate::current_arch::decode_input_with_decoder::<yaxpeax_superh::SuperH>(
+                parse_superh(base, &other[seg_idx..]), &buf, quiet);
             match &other[0..seg_idx] {
-                "sh" => wps(yaxpeax_superh::SuperHDecoder::SH1),
-                "sh2" => wps(yaxpeax_superh::SuperHDecoder::SH2),
-                "sh3" => wps(yaxpeax_superh::SuperHDecoder::SH3),
-                "sh4" => wps(yaxpeax_superh::SuperHDecoder::SH4),
-                "j2" => wps(yaxpeax_superh::SuperHDecoder::J2),
+                "sh" => decode(yaxpeax_superh::SuperHDecoder::SH1),
+                "sh2" => decode(yaxpeax_superh::SuperHDecoder::SH2),
+                "sh3" => decode(yaxpeax_superh::SuperHDecoder::SH3),
+                "sh4" => decode(yaxpeax_superh::SuperHDecoder::SH4),
+                "j2" => decode(yaxpeax_superh::SuperHDecoder::J2),
                 other => (StatusCode::NOT_FOUND, format!("unsupported architecture: {}", other))
             }
         }
     }
 }
 
-fn with_parsed_superh<F: FnOnce(yaxpeax_superh::SuperHDecoder) -> (StatusCode, String)>(
-    mut based_on: yaxpeax_superh::SuperHDecoder, mut from: &str, func: F
-) -> (StatusCode, String) {
-    let mut features = based_on.features.iter().copied().collect::<BTreeSet<_>>();
-
+fn parse_superh(mut based_on: yaxpeax_superh::SuperHDecoder, mut from: &str)
+    -> yaxpeax_superh::SuperHDecoder
+{
     while !from.is_empty() {
-        // This would be Not Trash if split_inclusive were stable; alas
         let op = from.chars().next().unwrap();
         from = &from[1..];
 
-        let next_feat_idx = from.find(|c| c == '+' || c == '-').unwrap_or(from.len());
+        let next_feat_idx = from.find(&['+', '-'][..]).unwrap_or(from.len());
         let feat = &from[0..next_feat_idx];
         from = &from[next_feat_idx..];
 
@@ -131,21 +127,18 @@ fn with_parsed_superh<F: FnOnce(yaxpeax_superh::SuperHDecoder) -> (StatusCode, S
             ('+', "f64") => based_on.fpscr_sz = true,
             ('-', "f64") => based_on.fpscr_sz = false,
 
-            ('+', "mmu") => { features.insert(yaxpeax_superh::SuperHFeature::MMU); },
-            ('-', "mmu") => { features.remove(&yaxpeax_superh::SuperHFeature::MMU); },
-            ('+', "fpu") => { features.insert(yaxpeax_superh::SuperHFeature::FPU); },
-            ('-', "fpu") => { features.remove(&yaxpeax_superh::SuperHFeature::FPU); },
-            ('+', "j2") => { features.insert(yaxpeax_superh::SuperHFeature::J2); },
-            ('-', "j2") => { features.remove(&yaxpeax_superh::SuperHFeature::J2); },
+            ('+', "mmu") => based_on.features.insert(yaxpeax_superh::SuperHFeatures::MMU),
+            ('-', "mmu") => based_on.features.remove(yaxpeax_superh::SuperHFeatures::MMU),
+            ('+', "fpu") => based_on.features.insert(yaxpeax_superh::SuperHFeatures::FPU),
+            ('-', "fpu") => based_on.features.remove(yaxpeax_superh::SuperHFeatures::FPU),
+            ('+', "j2") => based_on.features.insert(yaxpeax_superh::SuperHFeatures::J2),
+            ('-', "j2") => based_on.features.remove(yaxpeax_superh::SuperHFeatures::J2),
 
             pair => panic!("Who is {:?} and why was it not caught at parse time?", pair),
         }
     }
 
-    func(yaxpeax_superh::SuperHDecoder {
-        features: &features.into_iter().collect::<Vec<_>>()[..],
-        ..based_on
-    })
+    based_on
 }
 
 // yaxpeax-arch, implemented by all decoders here, is required at incompatible versions by
