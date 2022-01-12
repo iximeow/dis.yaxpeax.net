@@ -1,6 +1,5 @@
 use fastly::http::{header, Method, StatusCode};
 use fastly::{Error, Request, Response};
-use std::time::Instant;
 
 #[fastly::main]
 fn main(req: Request) -> Result<Response, Error> {
@@ -18,7 +17,7 @@ fn main(req: Request) -> Result<Response, Error> {
 
     let (status, resp) = handle_req(&req);
 
-    Ok(Response::from_status(status).with_body_str(&resp).with_content_type(fastly::mime::TEXT_HTML))
+    Ok(Response::from_status(status).with_body_text_html(&resp))
 }
 
 const USAGE_STRING: &'static str = "
@@ -552,7 +551,7 @@ mod current_arch {
                 }
                 Err(e) => {
                     result.push_str("<pre style=\"margin: 0\">");
-                    write!(result, "{:#010x}: {}", addr.to_linear(), e);
+                    write!(result, "{:#010x}: {}", addr.to_linear(), e).unwrap();
                     result.push_str("</pre>\n");
                     addr += A::Instruction::min_size();
                 }
